@@ -7,7 +7,7 @@ It is also reasonably quick (works fairly well with 100,000 candidates when test
 * Raven is not:
 - An alternate ~completing-read~, as it neither reads nor completes. Raven selects from a list of choices. A function ~raven-completing-read~ is provided to handle the many cases of ~completing-read~ that are merely selection (for example, in ~academic-phrases~), but it will fail in cases that supply a completion function, such as ~find-file~. Use custom commands in these cases.
 - Asynchronous. Caching of candidate lists should (and easily can) be handled elsewhere.
-- Intended for all audiences. I live in Emacs (EXWM, etc.) and used Helm heavily, but I disliked how bulky and unpredictable it was (timers, yuck). Raven is tailored to my needs and preferences in many ways. Particularly, Raven's minibuffer interface uses Evil. It should be easy to change this, but the defaults will always assume an Evil-based configuration.
+- Intended for all audiences. Raven is tailored to my needs and preferences in many ways. Particularly, Raven's minibuffer interface uses Evil. It should be easy to change this, but the defaults will always assume an Evil-based configuration.
 - All that large. Check out the source!
   
 * Future Work
