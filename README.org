@@ -83,3 +83,7 @@ In my actual [[https://github.com/chameco/tonic][configs]], I use a setup simila
     (raven (list (me/raven-bookmarks)
                  (me/raven-browser-actions))))
 #+END_SRC
+
+* Screenshots
+
+[[example.gif]]
