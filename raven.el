@@ -342,20 +342,24 @@ Display PROMPT as the prompt, or \"pattern: \" if not given."
   "Replacement for `completing-read'.
 PROMPT, COLLECTION, PREDICATE, REQUIRE-MATCH, INITIAL-INPUT, HIST, DEF, and
 INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
-  (ignore predicate require-match initial-input hist def inherit-input-method)
+  (ignore predicate require-match)
   (cond ((functionp collection)
-         (warn "Unsupported completion type. Try writing a custom source.")
-         nil)
+         (message "Unsupported completion type. Try writing a custom source.")
+         (read-string prompt initial-input hist def inherit-input-method))
         ((hash-table-p collection)
          (raven (list (raven-source "Completions"
-                                    (-zip-pair (hash-table-keys collection)
-                                               (hash-table-values collection))
+                                    (hash-table-keys collection)
                                     '()))))
         ((obarrayp collection)
          (let ((candidates (list)))
            (mapatoms (lambda (x) (push (symbol-name x) candidates)) collection)
            (raven (list (raven-source "Completions" candidates '())))))
-        (t (raven (list (raven-source "Completions" collection '()))
+        (t (raven (list (raven-source "Completions"
+                                      (mapcar (lambda (x)
+                                                (let ((y (if (consp x) (car x) x)))
+                                                  (if (symbolp y) (symbol-name y) y)))
+                                              collection)
+                                      '()))
                   prompt))))
 
 (defun raven-input () "Return last minibuffer input." raven--last)
