@@ -44,6 +44,7 @@
 (defvar raven--result nil)
 
 (defvar raven-minibuffer-map (make-sparse-keymap))
+(define-key raven-minibuffer-map (kbd "\\") (lambda () (interactive) nil))
 (define-key raven-minibuffer-map (kbd "C-g") 'minibuffer-keyboard-quit)
 (define-key raven-minibuffer-map (kbd "C-c") 'minibuffer-keyboard-quit)
 (define-key raven-minibuffer-map (kbd "<return>") 'raven-do)
@@ -260,11 +261,16 @@ Return match data if so; nil otherwise."
     (put-text-property (line-end-position) (point-max) 'readonly t))
   (raven-update-transient-map))
 
-(defun raven-minibuffer-setup ()
-  "Ready minibuffer for completion."
+(defun raven-minibuffer-setup (initial)
+  "Ready minibuffer for completion with INITIAL as initial input."
   (add-hook 'pre-command-hook 'raven-minibuffer-clear nil t)
   (add-hook 'post-command-hook 'raven-minibuffer-render nil t)
   (setq-local max-mini-window-height raven-minibuffer-lines)
+  (when initial
+    (save-excursion
+      (minibuffer-prompt-end)
+      (insert initial)))
+  (end-of-line)
   (raven-update-transient-map)
   (evil-insert-state))
 
@@ -321,9 +327,10 @@ If ACTION-FUNCTION is given use it, otherwise use the first action for the candi
                                (raven-candidate-value candidate)))))
   (exit-minibuffer))
 
-(defun raven (sources &optional prompt)
+(cl-defun raven (sources &key prompt initial)
   "Select a candidate and run an action using SOURCES.
-Display PROMPT as the prompt, or \"pattern: \" if not given."
+Display PROMPT as the prompt, or \"pattern: \" if not given.
+Use INITIAL as the initial input."
   (setq raven--sources sources
         raven--last nil
         raven--matching (raven-matching-sources sources "")
@@ -333,7 +340,7 @@ Display PROMPT as the prompt, or \"pattern: \" if not given."
         raven--result nil)
   (let ((inhibit-message t))
     (minibuffer-with-setup-hook
-        'raven-minibuffer-setup
+        (apply-partially 'raven-minibuffer-setup initial)
       (read-from-minibuffer (or prompt "pattern: ") nil raven-minibuffer-map)))
   (funcall raven--action raven--result))
 
@@ -344,23 +351,27 @@ PROMPT, COLLECTION, PREDICATE, REQUIRE-MATCH, INITIAL-INPUT, HIST, DEF, and
 INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (ignore predicate require-match)
   (cond ((functionp collection)
-         (message "Unsupported completion type. Try writing a custom source.")
          (read-string prompt initial-input hist def inherit-input-method))
         ((hash-table-p collection)
          (raven (list (raven-source "Completions"
                                     (hash-table-keys collection)
-                                    '()))))
+                                    '()))
+                :prompt prompt
+                :initial initial-input))
         ((obarrayp collection)
          (let ((candidates (list)))
            (mapatoms (lambda (x) (push (symbol-name x) candidates)) collection)
-           (raven (list (raven-source "Completions" candidates '())))))
+           (raven (list (raven-source "Completions" candidates '()))
+                  :prompt prompt
+                  :initial initial-input)))
         (t (raven (list (raven-source "Completions"
                                       (mapcar (lambda (x)
                                                 (let ((y (if (consp x) (car x) x)))
                                                   (if (symbolp y) (symbol-name y) y)))
                                               collection)
                                       '()))
-                  prompt))))
+                  :prompt prompt
+                  :initial initial-input))))
 
 (defun raven-input () "Return last minibuffer input." raven--last)
 
@@ -428,8 +439,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   "Preconfigured `raven' interface to replace `execute-external-command'."
   (interactive)
   (raven (list (raven-extended-command-history-source)
-               (raven-extended-commands-source))
-         "Command: "))
+               (raven-extended-commands-source))))
 
 (defun raven-for-buffers ()
   "Preconfigured `raven' interface for open buffers and recentf."
@@ -443,6 +453,17 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (interactive)
   (raven (list (raven-files-source)
                (raven-create-file-source))))
+
+(defun raven-read-file-name (prompt &optional dir default-filename mustmatch initial predicate)
+  "Replacement for `read-file-name'.
+PROMPT, DIR, DEFAULT-FILENAME, MUSTMATCH, INITIAL and PREDICATE have the same
+meaning as in `read-file-name'."
+  (ignore default-filename mustmatch initial predicate)
+  (raven (list (raven-source "Files"
+                             (directory-files (if dir dir default-directory))
+                             '()))
+         :prompt prompt
+         :initial initial))
 
 (provide 'raven)
 ;;; raven.el ends here
