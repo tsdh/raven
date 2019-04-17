@@ -45,8 +45,8 @@
 
 (defvar raven-minibuffer-map (make-sparse-keymap))
 (define-key raven-minibuffer-map (kbd "\\") (lambda () (interactive) nil))
-(define-key raven-minibuffer-map (kbd "C-g") 'minibuffer-keyboard-quit)
-(define-key raven-minibuffer-map (kbd "C-c") 'minibuffer-keyboard-quit)
+(define-key raven-minibuffer-map (kbd "C-g") 'keyboard-escape-quit)
+(define-key raven-minibuffer-map (kbd "C-c") 'keyboard-escape-quit)
 (define-key raven-minibuffer-map (kbd "<return>") 'raven-do)
 (define-key raven-minibuffer-map (kbd "<backtab>") 'raven-previous)
 (define-key raven-minibuffer-map (kbd "<tab>") 'raven-next)
@@ -118,18 +118,18 @@ ACTIONS is a list of actions, which can be:
   (cdddr source))
 
 (defun raven-candidate-display (candidate)
-  "Return the display name of CANDIDATE."
-  (if (consp candidate)
-      (car candidate)
-    candidate))
+  "Return the display of CANDIDATE."
+  (cond ((consp candidate) (car candidate))
+        (t candidate)))
 
 (defun raven-candidate-display-string (candidate)
   "Return the display name string of CANDIDATE."
-  (cond ((consp (raven-candidate-display candidate))
-         (car (raven-candidate-display candidate)))
-        ((stringp (raven-candidate-display candidate))
-         (raven-candidate-display candidate))
-        (t (raven-candidate-value candidate))))
+  (let ((display (raven-candidate-display candidate)))
+    (cond ((consp display) (car display))
+          ((stringp display) display)
+          ((keywordp display) (raven-candidate-value candidate))
+          ((symbolp candidate) (symbol-name candidate))
+          (t (error "Invalid candidate display %s for candidate %s" display candidate)))))
 
 (defun raven-candidate-value (candidate)
   "Return the value of CANDIDATE."
@@ -161,29 +161,26 @@ ACTIONS is a list of actions, which can be:
          (mapcar (lambda (w) (concat "\\(" w "\\)")) (split-string pattern))
          '(".*")))
 
-(defun raven-match (candidate pattern)
-  "Determine whether CANDIDATE is a match for PATTERN.
-Return match data if so; nil otherwise."
+(defun raven-match (candidate regex)
+  "Determine whether CANDIDATE is a match for REGEX."
   (let ((display (raven-candidate-display candidate)))
-    (cond ((or (stringp display) (consp display))
-           (when (string-match
-                  pattern
-                  (raven-candidate-display-string candidate))
-             (match-data)))
-          (t t))))
+    (cond ((keywordp display) t)
+          ((or (symbolp display) (stringp display) (consp display))
+           (string-match-p regex (raven-candidate-display-string candidate))))))
 
-(defun raven-matching-candidates (candidates pattern)
-  "Return the candidates in CANDIDATES matching PATTERN."
-  (seq-filter (lambda (c) (raven-match c pattern)) candidates))
+(defun raven-matching-candidates (candidates regex)
+  "Return the candidates in CANDIDATES matching REGEX."
+  (cond ((functionp candidates) (funcall candidates regex))
+        (t (seq-filter (lambda (c) (raven-match c regex)) candidates))))
 
-(defun raven-matching-sources (sources pattern)
-  "Return the sources in SOURCES matching PATTERN."
+(defun raven-matching-sources (sources regex)
+  "Return the sources in SOURCES matching REGEX."
   (let* ((matches (mapcar (lambda (s)
                             (raven-source
                              (raven-source-name s)
                              (raven-matching-candidates
                               (raven-source-candidates s)
-                              pattern)
+                              regex)
                              (raven-source-actions s)))
                           sources)))
     (seq-filter 'raven-source-candidates matches)))
@@ -327,6 +324,7 @@ If ACTION-FUNCTION is given use it, otherwise use the first action for the candi
                                (raven-candidate-value candidate)))))
   (exit-minibuffer))
 
+;;;###autoload
 (cl-defun raven (sources &key prompt initial)
   "Select a candidate and run an action using SOURCES.
 Display PROMPT as the prompt, or \"pattern: \" if not given.
@@ -344,34 +342,37 @@ Use INITIAL as the initial input."
       (read-from-minibuffer (or prompt "pattern: ") nil raven-minibuffer-map)))
   (funcall raven--action raven--result))
 
+;;;###autoload
 (defun raven-completing-read (prompt collection &optional predicate require-match
                                      initial-input hist def inherit-input-method)
   "Replacement for `completing-read'.
 PROMPT, COLLECTION, PREDICATE, REQUIRE-MATCH, INITIAL-INPUT, HIST, DEF, and
 INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (ignore predicate require-match)
-  (cond ((functionp collection)
-         (read-string prompt initial-input hist def inherit-input-method))
-        ((hash-table-p collection)
-         (raven (list (raven-source "Completions"
-                                    (hash-table-keys collection)
-                                    '()))
-                :prompt prompt
-                :initial initial-input))
-        ((obarrayp collection)
-         (let ((candidates (list)))
-           (mapatoms (lambda (x) (push (symbol-name x) candidates)) collection)
-           (raven (list (raven-source "Completions" candidates '()))
-                  :prompt prompt
-                  :initial initial-input)))
-        (t (raven (list (raven-source "Completions"
-                                      (mapcar (lambda (x)
-                                                (let ((y (if (consp x) (car x) x)))
-                                                  (if (symbolp y) (symbol-name y) y)))
-                                              collection)
-                                      '()))
-                  :prompt prompt
-                  :initial initial-input))))
+  (or
+   (cond ((functionp collection)
+          (read-string prompt initial-input hist def inherit-input-method))
+         ((hash-table-p collection)
+          (raven (list (raven-source "Completions"
+                                     (hash-table-keys collection)
+                                     '()))
+                 :prompt prompt
+                 :initial initial-input))
+         ((obarrayp collection)
+          (let ((candidates (list)))
+            (mapatoms (lambda (x) (push (symbol-name x) candidates)) collection)
+            (raven (list (raven-source "Completions" candidates '()))
+                   :prompt prompt
+                   :initial initial-input)))
+         (t (raven (list (raven-source "Completions"
+                                       (mapcar (lambda (x)
+                                                 (let ((y (if (consp x) (car x) x)))
+                                                   (if (symbolp y) (symbol-name y) y)))
+                                               collection)
+                                       '()))
+                   :prompt prompt
+                   :initial initial-input)))
+   (raven-input)))
 
 (defun raven-input () "Return last minibuffer input." raven--last)
 
@@ -381,13 +382,14 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
           (command-execute c))
         (cons (kbd "C-h") 'describe-function)))
 
+;;;###autoload
 (defun raven-extended-commands-source ()
   "Source for extended commands (`M-x')."
   (raven-source "Commands"
-                (mapcar (lambda (s) (cons (symbol-name s) s))
-                        (apropos-internal "" 'commandp))
+                (lambda (r) (apropos-internal r 'commandp))
                 raven-extended-command-actions))
 
+;;;###autoload
 (defun raven-extended-command-history-source ()
   "Source for extended command history."
   (raven-source "Command History"
@@ -395,20 +397,43 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
                         extended-command-history)
                 raven-extended-command-actions))
 
+;;;###autoload
+(defun raven-apropos-command-source ()
+  "Source for command lookup."
+  (raven-source "Commands"
+                (lambda (r) (apropos-internal r 'commandp))
+                '(describe-function)))
+
+;;;###autoload
+(defun raven-apropos-function-source ()
+  "Source for function lookup."
+  (raven-source "Functions"
+                (lambda (r) (apropos-internal r 'fboundp))
+                '(describe-function)))
+
+;;;###autoload
+(defun raven-apropos-variable-source ()
+  "Source for variable lookup."
+  (raven-source "Variables"
+                (lambda (r) (apropos-internal r (lambda (x) (and (boundp x) (not (keywordp x))))))
+                '(describe-variable)))
+
 (defvar raven-buffer-actions
   (list 'switch-to-buffer
         (cons (kbd "M-D") 'kill-buffer)))
 
+;;;###autoload
 (defun raven-buffers-source ()
   "Source for open buffers."
   (raven-source "Buffers"
                 (mapcar 'buffer-name (buffer-list))
                 raven-buffer-actions))
 
+;;;###autoload
 (defun raven-create-buffer-source ()
   "Dummy source to create a buffer."
   (raven-source "Other"
-                '((t . "Create buffer"))
+                '((:new . "Create buffer"))
                 (list (lambda (_) (switch-to-buffer (raven-input))))))
 
 (defvar raven-file-actions
@@ -417,30 +442,45 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
                             (when (y-or-n-p (concat "Delete file " f "? "))
                               (delete-file f))))))
 
+;;;###autoload
 (defun raven-files-source ()
   "Source for files in current directory."
   (raven-source "Files"
                 (directory-files default-directory)
                 raven-file-actions))
 
+;;;###autoload
 (defun raven-create-file-source ()
   "Dummy source to create a file."
   (raven-source "Other"
-                '((t . "Create file"))
+                '((:new . "Create file"))
                 (list (lambda (_) (find-file (raven-input))))))
 
+;;;###autoload
 (defun raven-recentf-source ()
   "Source for recentf."
   (raven-source "Recent Files"
                 recentf-list
                 raven-file-actions))
 
+;;;###autoload
 (defun raven-M-x ()
   "Preconfigured `raven' interface to replace `execute-external-command'."
   (interactive)
   (raven (list (raven-extended-command-history-source)
                (raven-extended-commands-source))))
 
+;;;###autoload
+(defun raven-apropos (&optional initial)
+  "Preconfigured `raven' interface to replace `apropos'.
+INITIAL is the initial text to match."
+  (interactive)
+  (raven (list (raven-apropos-command-source)
+               (raven-apropos-function-source)
+               (raven-apropos-variable-source))
+         :initial (concat "^" (if initial initial (thing-at-point 'symbol t)))))
+
+;;;###autoload
 (defun raven-for-buffers ()
   "Preconfigured `raven' interface for open buffers and recentf."
   (interactive)
@@ -448,22 +488,26 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
                (raven-recentf-source)
                (raven-create-buffer-source))))
 
+;;;###autoload
 (defun raven-for-files ()
   "Preconfigured `raven' interface for files in the current directory."
   (interactive)
   (raven (list (raven-files-source)
                (raven-create-file-source))))
 
+;;;###autoload
 (defun raven-read-file-name (prompt &optional dir default-filename mustmatch initial predicate)
   "Replacement for `read-file-name'.
 PROMPT, DIR, DEFAULT-FILENAME, MUSTMATCH, INITIAL and PREDICATE have the same
 meaning as in `read-file-name'."
-  (ignore default-filename mustmatch initial predicate)
-  (raven (list (raven-source "Files"
-                             (directory-files (if dir dir default-directory))
-                             '()))
-         :prompt prompt
-         :initial initial))
+  (ignore default-filename mustmatch predicate)
+  (let ((d (if dir dir default-directory)))
+    (concat d (raven (list (raven-source "Files" (directory-files d) '())
+                           (raven-source "Other"
+                                         '((:new . "New file"))
+                                         (list (lambda (_) (raven-input)))))
+                     :prompt prompt
+                     :initial initial))))
 
 (provide 'raven)
 ;;; raven.el ends here
