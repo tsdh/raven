@@ -426,10 +426,15 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
         (cons (kbd "M-D") 'kill-buffer)))
 
 ;;;###autoload
-(defun raven-buffers-source ()
-  "Source for open buffers."
+(defun raven-buffers-source (&optional sort-pred)
+  "Source for open buffers.
+An optional SORT-FN may be provided to sort the buffers (see
+`sort')."
   (raven-source "Buffers"
-                (mapcar 'buffer-name (buffer-list))
+                (mapcar 'buffer-name
+			(if sort-pred
+			    (sort (buffer-list) sort-pred)
+			  (buffer-list)))
                 raven-buffer-actions))
 
 ;;;###autoload
