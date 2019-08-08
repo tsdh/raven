@@ -251,7 +251,7 @@ ACTIONS is a list of actions, which can be:
       (condition-case err
 	  (string-match-p pattern "")
 	(invalid-regexp
-	 ;; Nope, it's not.  Probably the used typed \ in order to fix a file
+	 ;; Nope, it's not.  Probably the user typed \ in order to fix a file
 	 ;; extension like entering raven\.el.  Print the error and simply use
 	 ;; the old pattern until it becomes valid again.
 	 (minibuffer-error-function err "" 'raven-minibuffer-render)
