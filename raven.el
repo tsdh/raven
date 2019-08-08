@@ -11,7 +11,8 @@
 (require 'subr-x)
 (require 'seq)
 (require 'recentf)
-(require 'evil)
+(when (featurep 'evil)
+  (require 'evil))
 
 (defgroup raven nil
   "Efficient selection and navigation."
@@ -55,11 +56,12 @@
 (define-key raven-minibuffer-map (kbd "<prior>") 'raven-previous-source)
 (define-key raven-minibuffer-map (kbd "<next>") 'raven-next-source)
 
-(evil-define-key 'normal raven-minibuffer-map
-  (kbd "k") 'raven-previous
-  (kbd "j") 'raven-next
-  (kbd "K") 'raven-previous-source
-  (kbd "J") 'raven-next-source)
+(when (fboundp 'evil-define-key)
+  (evil-define-key 'normal raven-minibuffer-map
+		   (kbd "k") 'raven-previous
+		   (kbd "j") 'raven-next
+		   (kbd "K") 'raven-previous-source
+		   (kbd "J") 'raven-next-source))
 
 (defun raven-minibuffer-line (str)
   "Write STR to the minibuffer."
@@ -269,7 +271,8 @@ ACTIONS is a list of actions, which can be:
       (insert initial)))
   (end-of-line)
   (raven-update-transient-map)
-  (evil-insert-state))
+  (when (fboundp 'evil-insert-state)
+    (evil-insert-state)))
 
 (defun raven-previous-source ()
   "Move to the previous source."
