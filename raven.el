@@ -45,7 +45,6 @@
 (defvar raven--result nil)
 
 (defvar raven-minibuffer-map (make-sparse-keymap))
-(define-key raven-minibuffer-map (kbd "\\") (lambda () (interactive) nil))
 (define-key raven-minibuffer-map (kbd "C-g") 'keyboard-escape-quit)
 (define-key raven-minibuffer-map (kbd "C-c") 'keyboard-escape-quit)
 (define-key raven-minibuffer-map (kbd "<return>") 'raven-do)
@@ -248,6 +247,15 @@ ACTIONS is a list of actions, which can be:
   "Draw matching candidates to minibuffer."
   (save-excursion
     (let ((pattern (raven-minibuffer-input)))
+      ;; Check if the pattern is valid.
+      (condition-case err
+	  (string-match-p pattern "")
+	(invalid-regexp
+	 ;; Nope, it's not.  Probably the user typed \ in order to fix a file
+	 ;; extension like entering raven\.el.  Print the error and simply use
+	 ;; the old pattern until it becomes valid again.
+	 (minibuffer-error-function err "" 'raven-minibuffer-render)
+	 (setq pattern raven--last)))
       (unless (string= pattern raven--last)
         (setq raven--last pattern
               raven--index 0
