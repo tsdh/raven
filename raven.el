@@ -86,56 +86,49 @@
    (minibuffer-prompt-end)
    (line-end-position)))
 
-(defun raven-source (name candidates actions)
-  "Create a new source named NAME with the given CANDIDATES and ACTIONS.
+(cl-defstruct (raven-candidate (:constructor raven-candidate--create)
+                               (:copier nil))
+  type display face value action)
 
-CANDIDATES is a list of (<display> . <value>).
-<display> is either a string, a symbol, or a pair of a string and a face.
-If <display> is a symbol, the candidate always matches, and it is displayed
-as its value.
-This is useful for creating \"dummy\" candidates by ignoring the argument to
-the action (which will be the <display> symbol rather than <value>, for dispatch
-and instead referencing `raven-input'.
-ACTIONS is a list of actions, which can be:
-- functions taking candidate values as arguments
-- pairs of key strings and such functions"
-  (cons name (cons candidates (cons actions (raven-actions-keymap actions)))))
-
-(defun raven-source-name (source)
-  "Return the name of SOURCE."
-  (car source))
-
-(defun raven-source-candidates (source)
-  "Return the candidates of SOURCE."
-  (cadr source))
-
-(defun raven-source-actions (source)
-  "Return the actions of SOURCE."
-  (caddr source))
-
-(defun raven-source-keymap (source)
-  "Return the action keymap of SOURCE."
-  (cdddr source))
-
-(defun raven-candidate-display (candidate)
-  "Return the display of CANDIDATE."
-  (cond ((consp candidate) (car candidate))
-        (t candidate)))
+(cl-defun raven-candidate-create
+    (display &key
+             value
+             (type 'normal)
+             (face 'default)
+             (action '()))
+  (raven-candidate--create
+   :type type
+   :display display
+   :face face
+   :value (if value value display)
+   :action action))
 
 (defun raven-candidate-display-string (candidate)
-  "Return the display name string of CANDIDATE."
+  "Return the display of CANDIDATE as a string."
   (let ((display (raven-candidate-display candidate)))
-    (cond ((consp display) (car display))
-          ((stringp display) display)
-          ((keywordp display) (raven-candidate-value candidate))
-          ((symbolp candidate) (symbol-name candidate))
-          (t (error "Invalid candidate display %s for candidate %s" display candidate)))))
+    (cond ((stringp display) display)
+          ((or (symbolp display) (keywordp display)) (symbol-name display))
+          (t (error "Invalid candidate display %s for candidate %s (of type %s)"
+                    display candidate (type-of display))))))
 
-(defun raven-candidate-value (candidate)
-  "Return the value of CANDIDATE."
-  (if (consp candidate)
-      (cdr candidate)
-    candidate))
+(defun raven-highlight-candidate (candidate)
+  "Return a copy of CANDIDATE with the face set to raven-highlight."
+  (raven-candidate--create
+   :type (raven-candidate-type candidate)
+   :display (raven-candidate-display candidate)
+   :face 'raven-highlight
+   :value (raven-candidate-value candidate)
+   :action (raven-candidate-action candidate)))
+
+(defun raven-match (candidate regex)
+  "Determine whether CANDIDATE is a match for REGEX."
+  (let ((type (raven-candidate-type candidate)))
+    (cond ((eq 'dummy type) t)
+          (t (string-match-p regex (raven-candidate-display-string candidate))))))
+
+(cl-defstruct (raven-source (:constructor raven-source--create)
+                            (:copier nil))
+  name candidates actions keymap)
 
 (defun raven-action-function (action)
   "Return the function associated with ACTION."
@@ -155,50 +148,58 @@ ACTIONS is a list of actions, which can be:
           actions)
     keymap))
 
-(defun raven-pattern-regex (pattern)
-  "Convert PATTERN into a regular expression."
-  (apply 'string-join
-         (mapcar (lambda (w) (concat "\\(" w "\\)")) (split-string pattern))
-         '(".*")))
+(cl-defun raven-source-create (name &key candidates (actions '()))
+  "Create a new source named NAME with the given CANDIDATES and ACTIONS.
 
-(defun raven-match (candidate regex)
-  "Determine whether CANDIDATE is a match for REGEX."
-  (let ((display (raven-candidate-display candidate)))
-    (cond ((keywordp display) t)
-          ((or (symbolp display) (stringp display) (consp display))
-           (string-match-p regex (raven-candidate-display-string candidate))))))
+CANDIDATES is a list of candidates (either `raven-candidate's or display values).
+ACTIONS is a list of actions, which can be:
+- functions taking candidate values as arguments
+- pairs of key strings and such functions"
+  (raven-source--create
+   :name name
+   :candidates (mapcar (lambda (c)
+                         (if (raven-candidate-p c)
+                             c
+                           (raven-candidate-create c)))
+                       candidates)
+   :actions actions
+   :keymap (raven-actions-keymap actions)))
 
 (defun raven-matching-candidates (candidates regex)
   "Return the candidates in CANDIDATES matching REGEX."
   (cond ((functionp candidates) (funcall candidates regex))
         (t (seq-filter (lambda (c) (raven-match c regex)) candidates))))
 
+(defun raven-filter-source (source regex)
+  "Return a copy of SOURCE including only the candidates matching REGEX."
+  (raven-source--create
+   :name (raven-source-name source)
+   :candidates (raven-matching-candidates (raven-source-candidates source) regex)
+   :actions (raven-source-actions source)
+   :keymap (raven-source-keymap source)))
+
+(defun raven-pattern-regex (pattern)
+  "Convert PATTERN into a regular expression."
+  (apply 'string-join
+         (mapcar (lambda (w) (concat "\\(" w "\\)")) (split-string pattern))
+         '(".*")))
+
 (defun raven-matching-sources (sources regex)
   "Return the sources in SOURCES matching REGEX."
-  (let* ((matches (mapcar (lambda (s)
-                            (raven-source
-                             (raven-source-name s)
-                             (raven-matching-candidates
-                              (raven-source-candidates s)
-                              regex)
-                             (raven-source-actions s)))
-                          sources)))
+  (let* ((matches (mapcar (lambda (s) (raven-filter-source s regex)) sources)))
     (seq-filter 'raven-source-candidates matches)))
 
 (defun raven-display-source (source)
   "Display SOURCE."
   (when source
     (raven-minibuffer-line-face (raven-source-name source) 'raven-source-name)
-    (mapc (lambda (c) (let ((display (raven-candidate-display c)))
-                        (if (consp display)
-                            (raven-minibuffer-line-face (car display)
-                                                        (cdr display))
-                          (raven-minibuffer-line
-                           (raven-candidate-display-string c)))))
+    (mapc (lambda (c) (raven-minibuffer-line-face
+                       (raven-candidate-display-string c)
+                       (raven-candidate-face c)))
           (raven-source-candidates source))))
 
 (defun raven-nearby (sources)
-  "Return candidates in SOURCES that are close to the selected candidate."
+  "Filter SOURCES to only include candidates close to the selected candidate."
   (let* ((adjacent
           (mapcar
            (lambda (s)
@@ -213,8 +214,9 @@ ACTIONS is a list of actions, which can be:
      (lambda (s)
        (when s
          (let* ((candidates (raven-source-candidates (car s))))
-           (raven-source
-            (raven-source-name (car s))
+           (raven-source--create
+            :name (raven-source-name (car s))
+            :candidates
             (cond ((eq (cdr s) 'g)
                    (-take raven-minibuffer-lines candidates))
                   (t
@@ -228,19 +230,17 @@ ACTIONS is a list of actions, which can be:
                                           (- (/ raven-minibuffer-lines 2) 1))
                                        candidates))
                             collect (if (= i raven--index)
-                                        (cons
-                                         (cons
-                                          (raven-candidate-display-string j)
-                                          'raven-highlight)
-                                         (raven-candidate-value j))
+                                        (raven-highlight-candidate j)
                                       j))))
-            (raven-source-actions (car s))))))
+            :actions (raven-source-actions (car s))
+            :keymap (raven-source-keymap (car s))))))
      adjacent)))
 
 (defun raven-update-transient-map ()
   "Update the transient keymap to match the current source."
   (let ((source (car (nthcdr raven--source raven--matching))))
-    (set-transient-map (raven-source-keymap source))))
+    (when source
+      (set-transient-map (raven-source-keymap source)))))
 
 (defun raven-minibuffer-render ()
   "Draw matching candidates to minibuffer."
@@ -312,16 +312,16 @@ If ACTION-FUNCTION is given use it, otherwise use the first action for the candi
   (interactive)
   (let* ((source (car (nthcdr raven--source raven--matching)))
          (candidate (car (nthcdr raven--index (raven-source-candidates source)))))
-    (setq raven--action (if action-function
-                            action-function
-                          (let ((actions (raven-source-actions source)))
-                            (if actions
-                                (raven-action-function (car actions))
-                              (lambda (x) x))))
-          raven--result (cond ((symbolp (raven-candidate-display candidate))
-                               (raven-candidate-display candidate))
+    (setq raven--action (cond (action-function
+                               action-function)
+                              ((raven-candidate-action candidate)
+                               (raven-candidate-action candidate))
                               (t
-                               (raven-candidate-value candidate)))))
+                               (let ((actions (raven-source-actions source)))
+                                 (if actions
+                                     (raven-action-function (car actions))
+                                   (lambda (x) x)))))
+          raven--result (raven-candidate-value candidate)))
   (exit-minibuffer))
 
 ;;;###autoload
@@ -353,23 +353,18 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
    (cond ((functionp collection)
           (read-string prompt initial-input hist def inherit-input-method))
          ((hash-table-p collection)
-          (raven (list (raven-source "Completions"
-                                     (hash-table-keys collection)
-                                     '()))
+          (raven (list (raven-source-create "Completions" :candidates (hash-table-keys collection)))
                  :prompt prompt
                  :initial initial-input))
          ((obarrayp collection)
           (let ((candidates (list)))
-            (mapatoms (lambda (x) (push (symbol-name x) candidates)) collection)
-            (raven (list (raven-source "Completions" candidates '()))
+            (mapatoms (lambda (x) (push (raven-candidate-create (symbol-name x)) candidates)) collection)
+            (raven (list (raven-source-create
+                          "Completions"
+                          :candidates candidates))
                    :prompt prompt
                    :initial initial-input)))
-         (t (raven (list (raven-source "Completions"
-                                       (mapcar (lambda (x)
-                                                 (let ((y (if (consp x) (car x) x)))
-                                                   (if (symbolp y) (symbol-name y) y)))
-                                               collection)
-                                       '()))
+         (t (raven (list (raven-source-create "Completions" :candidates collection))
                    :prompt prompt
                    :initial initial-input)))
    (raven-input)))
@@ -385,38 +380,53 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
 ;;;###autoload
 (defun raven-extended-commands-source ()
   "Source for extended commands (`M-x')."
-  (raven-source "Commands"
-                (lambda (r) (apropos-internal r 'commandp))
-                raven-extended-command-actions))
+  (raven-source-create
+   "Commands"
+   :candidates
+   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r 'commandp)))
+   :actions
+   raven-extended-command-actions))
 
 ;;;###autoload
 (defun raven-extended-command-history-source ()
   "Source for extended command history."
-  (raven-source "Command History"
-                (mapcar (lambda (s) (cons s (intern-soft s)))
-                        extended-command-history)
-                raven-extended-command-actions))
+  (raven-source-create
+   "Command History"
+   :candidates
+   (mapcar (lambda (s) (raven-candidate-create s :value (intern-soft s)))
+           extended-command-history)
+   :actions
+   raven-extended-command-actions))
 
 ;;;###autoload
 (defun raven-apropos-command-source ()
   "Source for command lookup."
-  (raven-source "Commands"
-                (lambda (r) (apropos-internal r 'commandp))
-                '(describe-function)))
+  (raven-source-create
+   "Commands"
+   :candidates
+   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r 'commandp)))
+   :actions
+   '(describe-function)))
 
 ;;;###autoload
 (defun raven-apropos-function-source ()
   "Source for function lookup."
-  (raven-source "Functions"
-                (lambda (r) (apropos-internal r 'fboundp))
-                '(describe-function)))
+  (raven-source-create
+   "Functions"
+   :candidates
+   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r 'fboundp)))
+   :actions
+   '(describe-function)))
 
 ;;;###autoload
 (defun raven-apropos-variable-source ()
   "Source for variable lookup."
-  (raven-source "Variables"
-                (lambda (r) (apropos-internal r (lambda (x) (and (boundp x) (not (keywordp x))))))
-                '(describe-variable)))
+  (raven-source-create
+   "Variables"
+   :candidates
+   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r (lambda (x) (and (boundp x) (not (keywordp x)))))))
+   :actions
+   '(describe-variable)))
 
 (defvar raven-buffer-actions
   (list 'switch-to-buffer
@@ -425,16 +435,23 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
 ;;;###autoload
 (defun raven-buffers-source ()
   "Source for open buffers."
-  (raven-source "Buffers"
-                (mapcar 'buffer-name (buffer-list))
-                raven-buffer-actions))
+  (raven-source-create
+   "Buffers"
+   :candidates
+   (mapcar (lambda (b) (raven-candidate-create (buffer-name b))) (buffer-list))
+   :actions
+   raven-buffer-actions))
 
 ;;;###autoload
 (defun raven-create-buffer-source ()
   "Dummy source to create a buffer."
-  (raven-source "Other"
-                '((:new . "Create buffer"))
-                (list (lambda (_) (switch-to-buffer (raven-input))))))
+  (raven-source-create
+   "Other"
+   :candidates
+   (list (raven-candidate-create
+          "Create buffer"
+          :type 'dummy
+          :action (lambda (_) (switch-to-buffer (raven-input)))))))
 
 (defvar raven-file-actions
   (list 'find-file
@@ -445,23 +462,33 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
 ;;;###autoload
 (defun raven-files-source ()
   "Source for files in current directory."
-  (raven-source "Files"
-                (directory-files default-directory)
-                raven-file-actions))
+  (raven-source-create
+   "Files"
+   :candidates
+   (mapcar #'raven-candidate-create (directory-files default-directory))
+   :actions
+   raven-file-actions))
 
 ;;;###autoload
 (defun raven-create-file-source ()
   "Dummy source to create a file."
-  (raven-source "Other"
-                '((:new . "Create file"))
-                (list (lambda (_) (find-file (raven-input))))))
+  (raven-source-create
+   "Other"
+   :candidates
+   (list (raven-candidate-create
+          "Create file"
+          :type 'dummy
+          :action (lambda (_) (find-file (raven-input)))))))
 
 ;;;###autoload
 (defun raven-recentf-source ()
   "Source for recentf."
-  (raven-source "Recent Files"
-                recentf-list
-                raven-file-actions))
+  (raven-source-create
+   "Recent Files"
+   :candidates
+   (mapcar #'raven-candidate-create recentf-list)
+   :actions
+   raven-file-actions))
 
 ;;;###autoload
 (defun raven-M-x ()
@@ -502,10 +529,15 @@ PROMPT, DIR, DEFAULT-FILENAME, MUSTMATCH, INITIAL and PREDICATE have the same
 meaning as in `read-file-name'."
   (ignore default-filename mustmatch predicate)
   (let ((d (if dir dir default-directory)))
-    (concat d (raven (list (raven-source "Files" (directory-files d) '())
-                           (raven-source "Other"
-                                         '((:new . "New file"))
-                                         (list (lambda (_) (raven-input)))))
+    (concat d (raven (list (raven-source-create
+                            "Files"
+                            :candidates (mapcar #'raven-candidate-create (directory-files d)))
+                           (raven-source-create
+                            "Other"
+                            :candidates (list (raven-candidate-create
+                                               "New file"
+                                               :type 'dummy
+                                               :action (lambda (_) (raven-input))))))
                      :prompt prompt
                      :initial initial))))
 
