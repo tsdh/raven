@@ -479,6 +479,17 @@ An optional SORT-FN may be provided to sort the buffers (see
                 recentf-list
                 raven-file-actions))
 
+;; project.el is in Emacs since version 25.1, I think.
+(when (and (fboundp 'project-current)
+	   (fboundp 'project-files))
+  (defun raven-project-source ()
+    "Source for project files using Emacs's `project.el'."
+    (raven-source "Project Files"
+		  (when-let (p (project-current))
+		    (mapcar #'file-relative-name
+			    (project-files p)))
+		  raven-file-actions)))
+
 ;;;###autoload
 (defun raven-M-x ()
   "Preconfigured `raven' interface to replace `execute-external-command'."
