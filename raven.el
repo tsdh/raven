@@ -482,13 +482,28 @@ An optional SORT-FN may be provided to sort the buffers (see
 ;; project.el is in Emacs since version 25.1, I think.
 (when (and (fboundp 'project-current)
 	   (fboundp 'project-files))
-  (defun raven-project-source ()
-    "Source for project files using Emacs's `project.el'."
-    (raven-source "Project Files"
-		  (when-let (p (project-current))
-		    (mapcar #'file-relative-name
-			    (project-files p)))
-		  raven-file-actions)))
+  (if (fboundp 'make-thread)
+      ;; In Emacs 27 we can compute the candidates asynchronously in another
+      ;; thread which prevents hangs in large projects.
+      (defun raven-project-source ()
+	(when-let (p (project-current))
+	  (let ((rs (raven-source
+		     "Project Files"
+		     (list "*Computing candidates asynchronously*")
+		     raven-file-actions)))
+	    (make-thread
+	     (lambda ()
+	       (let ((files (mapcar #'file-relative-name
+				    (project-files p))))
+		 (setf (nth 1 rs) files))))
+	    rs)))
+    (defun raven-project-source ()
+      "Source for project files using Emacs's `project.el'."
+      (raven-source "Project Files"
+		    (when-let (p (project-current))
+		      (mapcar #'file-relative-name
+			      (project-files p)))
+		    raven-file-actions))))
 
 ;;;###autoload
 (defun raven-M-x ()
