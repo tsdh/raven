@@ -9,7 +9,6 @@
 ;;; Code:
 (require 'dash)
 (require 'subr-x)
-(require 'seq)
 (require 'recentf)
 (require 'evil)
 
@@ -140,12 +139,13 @@
   "Return a keymap for ACTIONS."
   (let ((keymap (make-sparse-keymap)))
     (set-keymap-parent keymap raven-minibuffer-map)
-    (mapc (lambda (action)
-            (unless (functionp action)
-              (define-key keymap (car action)
-                (lambda () (interactive)
-                  (raven-do (cdr action))))))
-          actions)
+    (mapc
+     (lambda (a)
+       (unless (functionp a)
+         (define-key keymap (car a)
+           (lambda () (interactive)
+             (raven-do (cdr a))))))
+     actions)
     keymap))
 
 (cl-defun raven-source-create (name &key candidates (actions '()))
@@ -157,18 +157,15 @@ ACTIONS is a list of actions, which can be:
 - pairs of key strings and such functions"
   (raven-source--create
    :name name
-   :candidates (mapcar (lambda (c)
-                         (if (raven-candidate-p c)
-                             c
-                           (raven-candidate-create c)))
-                       candidates)
+   :candidates (--map (if (raven-candidate-p it) it (raven-candidate-create it))
+                      candidates)
    :actions actions
    :keymap (raven-actions-keymap actions)))
 
 (defun raven-matching-candidates (candidates regex)
   "Return the candidates in CANDIDATES matching REGEX."
   (cond ((functionp candidates) (funcall candidates regex))
-        (t (seq-filter (lambda (c) (raven-match c regex)) candidates))))
+        (t (--filter (raven-match it regex) candidates))))
 
 (defun raven-filter-source (source regex)
   "Return a copy of SOURCE including only the candidates matching REGEX."
@@ -180,60 +177,58 @@ ACTIONS is a list of actions, which can be:
 
 (defun raven-pattern-regex (pattern)
   "Convert PATTERN into a regular expression."
-  (apply 'string-join
-         (mapcar (lambda (w) (concat "\\(" w "\\)")) (split-string pattern))
+  (apply #'string-join
+         (--map (concat "\\(" it "\\)") (split-string pattern))
          '(".*")))
 
 (defun raven-matching-sources (sources regex)
   "Return the sources in SOURCES matching REGEX."
-  (let* ((matches (mapcar (lambda (s) (raven-filter-source s regex)) sources)))
-    (seq-filter 'raven-source-candidates matches)))
+  (let* ((matches (--map (raven-filter-source it regex) sources)))
+    (-filter #'raven-source-candidates matches)))
 
 (defun raven-display-source (source)
   "Display SOURCE."
   (when source
     (raven-minibuffer-line-face (raven-source-name source) 'raven-source-name)
-    (mapc (lambda (c) (raven-minibuffer-line-face
-                       (raven-candidate-display-string c)
-                       (raven-candidate-face c)))
-          (raven-source-candidates source))))
+    (--map (raven-minibuffer-line-face
+            (raven-candidate-display-string it)
+            (raven-candidate-face it))
+           (raven-source-candidates source))))
 
 (defun raven-nearby (sources)
   "Filter SOURCES to only include candidates close to the selected candidate."
   (let* ((adjacent
-          (mapcar
-           (lambda (s)
-             (cond ((and (< (cdr s) (+ raven--source raven-minibuffer-lines))
-                         (> (cdr s) raven--source))
-                    (cons (car s) 'g))
-                   ((= (cdr s) raven--source)
-                    (cons (car s) 'e))
-                   (t nil)))
+          (--map
+           (cond ((and (< (cdr it) (+ raven--source raven-minibuffer-lines))
+                       (> (cdr it) raven--source))
+                  (cons (car it) 'g))
+                 ((= (cdr it) raven--source)
+                  (cons (car it) 'e))
+                 (t nil))
            (-zip-pair sources (number-sequence 0 (length sources))))))
-    (mapcar
-     (lambda (s)
-       (when s
-         (let* ((candidates (raven-source-candidates (car s))))
-           (raven-source--create
-            :name (raven-source-name (car s))
-            :candidates
-            (cond ((eq (cdr s) 'g)
-                   (-take raven-minibuffer-lines candidates))
-                  (t
-                   (cl-loop for i from (max (- raven--index
-                                               (- (/ raven-minibuffer-lines 2) 1))
-                                            0)
-                            for j in (-take
-                                      raven-minibuffer-lines
-                                      (-drop
-                                       (- raven--index
-                                          (- (/ raven-minibuffer-lines 2) 1))
-                                       candidates))
-                            collect (if (= i raven--index)
-                                        (raven-highlight-candidate j)
-                                      j))))
-            :actions (raven-source-actions (car s))
-            :keymap (raven-source-keymap (car s))))))
+    (--map
+     (when it
+       (let* ((candidates (raven-source-candidates (car it))))
+         (raven-source--create
+          :name (raven-source-name (car it))
+          :candidates
+          (cond ((eq (cdr it) 'g)
+                 (-take raven-minibuffer-lines candidates))
+                (t
+                 (cl-loop for i from (max (- raven--index
+                                             (- (/ raven-minibuffer-lines 2) 1))
+                                          0)
+                          for j in (-take
+                                    raven-minibuffer-lines
+                                    (-drop
+                                     (- raven--index
+                                        (- (/ raven-minibuffer-lines 2) 1))
+                                     candidates))
+                          collect (if (= i raven--index)
+                                      (raven-highlight-candidate j)
+                                    j))))
+          :actions (raven-source-actions (car it))
+          :keymap (raven-source-keymap (car it)))))
      adjacent)))
 
 (defun raven-update-transient-map ()
@@ -253,7 +248,7 @@ ACTIONS is a list of actions, which can be:
               raven--matching (raven-matching-sources
                                raven--sources
                                (raven-pattern-regex pattern)))))
-    (mapc 'raven-display-source (raven-nearby raven--matching))
+    (-map #'raven-display-source (raven-nearby raven--matching))
     (goto-char (minibuffer-prompt-end))
     (put-text-property (line-end-position) (point-max) 'readonly t))
   (raven-update-transient-map))
@@ -364,7 +359,13 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
                           :candidates candidates))
                    :prompt prompt
                    :initial initial-input)))
-         (t (raven (list (raven-source-create "Completions" :candidates collection))
+         (t (raven (list (raven-source-create
+                          "Completions"
+                          :candidates
+                          (--map (if (consp it)
+                                     (raven-candidate-create (car it) :value (number-to-string (cdr it)))
+                                   it)
+                                 collection)))
                    :prompt prompt
                    :initial initial-input)))
    (raven-input)))
@@ -383,7 +384,9 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Commands"
    :candidates
-   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r 'commandp)))
+   (--map
+    (raven-candidate-create (symbol-name it) :value it)
+    (apropos-internal "" 'commandp))
    :actions
    raven-extended-command-actions))
 
@@ -393,8 +396,9 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Command History"
    :candidates
-   (mapcar (lambda (s) (raven-candidate-create s :value (intern-soft s)))
-           extended-command-history)
+   (--map
+    (raven-candidate-create it :value (intern-soft it))
+    extended-command-history)
    :actions
    raven-extended-command-actions))
 
@@ -404,7 +408,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Commands"
    :candidates
-   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r 'commandp)))
+   (-map #'raven-candidate-create (apropos-internal "" #'commandp))
    :actions
    '(describe-function)))
 
@@ -414,7 +418,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Functions"
    :candidates
-   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r 'fboundp)))
+   (-map #'raven-candidate-create (apropos-internal "" #'fboundp))
    :actions
    '(describe-function)))
 
@@ -424,7 +428,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Variables"
    :candidates
-   (lambda (r) (mapcar #'raven-candidate-create (apropos-internal r (lambda (x) (and (boundp x) (not (keywordp x)))))))
+   (-map #'raven-candidate-create (apropos-internal "" (lambda (x) (and (boundp x) (not (keywordp x))))))
    :actions
    '(describe-variable)))
 
@@ -438,7 +442,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Buffers"
    :candidates
-   (mapcar (lambda (b) (raven-candidate-create (buffer-name b))) (buffer-list))
+   (--map (raven-candidate-create (buffer-name it)) (buffer-list))
    :actions
    raven-buffer-actions))
 
@@ -465,7 +469,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Files"
    :candidates
-   (mapcar #'raven-candidate-create (directory-files default-directory))
+   (-map #'raven-candidate-create (directory-files default-directory))
    :actions
    raven-file-actions))
 
@@ -486,7 +490,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Recent Files"
    :candidates
-   (mapcar #'raven-candidate-create recentf-list)
+   (-map #'raven-candidate-create recentf-list)
    :actions
    raven-file-actions))
 
@@ -531,7 +535,7 @@ meaning as in `read-file-name'."
   (let ((d (if dir dir default-directory)))
     (concat d (raven (list (raven-source-create
                             "Files"
-                            :candidates (mapcar #'raven-candidate-create (directory-files d)))
+                            :candidates (-map #'raven-candidate-create (directory-files d)))
                            (raven-source-create
                             "Other"
                             :candidates (list (raven-candidate-create
