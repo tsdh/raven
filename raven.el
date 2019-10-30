@@ -8,6 +8,9 @@
 
 ;;; Code:
 (require 'dash)
+(require 's)
+(require 'f)
+(require 'ht)
 (require 'subr-x)
 (require 'recentf)
 (require 'evil)
@@ -305,18 +308,25 @@ ACTIONS is a list of actions, which can be:
   "Act upon selected candidate.
 If ACTION-FUNCTION is given use it, otherwise use the first action for the candidate."
   (interactive)
-  (let* ((source (car (nthcdr raven--source raven--matching)))
-         (candidate (car (nthcdr raven--index (raven-source-candidates source)))))
-    (setq raven--action (cond (action-function
-                               action-function)
-                              ((raven-candidate-action candidate)
-                               (raven-candidate-action candidate))
-                              (t
-                               (let ((actions (raven-source-actions source)))
-                                 (if actions
-                                     (raven-action-function (car actions))
-                                   (lambda (x) x)))))
-          raven--result (raven-candidate-value candidate)))
+  (message "start")
+  (if (null raven--matching)
+      (progn
+        (setq raven--action (lambda (x) x)
+              raven--result nil))
+    (progn
+      (let* ((source (car (nthcdr raven--source raven--matching)))
+             (candidate (car (nthcdr raven--index (raven-source-candidates source)))))
+        (message "here")
+        (setq raven--action (cond (action-function
+                                   action-function)
+                                  ((raven-candidate-action candidate)
+                                   (raven-candidate-action candidate))
+                                  (t
+                                   (let ((actions (raven-source-actions source)))
+                                     (if actions
+                                         (raven-action-function (car actions))
+                                       (lambda (x) x)))))
+              raven--result (raven-candidate-value candidate)))))
   (exit-minibuffer))
 
 ;;;###autoload
@@ -354,16 +364,14 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
          ((obarrayp collection)
           (let ((candidates (list)))
             (mapatoms (lambda (x) (push (raven-candidate-create (symbol-name x)) candidates)) collection)
-            (raven (list (raven-source-create
-                          "Completions"
-                          :candidates candidates))
+            (raven (list (raven-source-create "Completions" :candidates candidates))
                    :prompt prompt
                    :initial initial-input)))
          (t (raven (list (raven-source-create
                           "Completions"
                           :candidates
                           (--map (if (consp it)
-                                     (raven-candidate-create (car it) :value (number-to-string (cdr it)))
+                                     (raven-candidate-create (car it))
                                    it)
                                  collection)))
                    :prompt prompt
@@ -544,6 +552,38 @@ meaning as in `read-file-name'."
                                                :action (lambda (_) (raven-input))))))
                      :prompt prompt
                      :initial initial))))
+
+(defun raven-file-contents-actions (file)
+  "Actions for candidate values corresponding to lines in FILE."
+  (list
+   (lambda (index)
+     (find-file file)
+     (goto-char (point-min))
+     (forward-line index)
+     (pulse-momentary-highlight-one-line (point)))))
+
+(defun raven-file-contents-source (file)
+  "Source for lines in FILE."
+  (raven-source-create
+   file
+   :candidates
+   (-map-indexed
+    (lambda (index l)
+      (raven-candidate-create l :value index))
+    (s-split "\n" (f-read-text file)))
+   :actions
+   (raven-file-contents-actions file)))
+
+;; (defun tonic/raven-grep (query)
+;;   "Sources for lines found via grep (or a clone)."
+;;   (let* ((result (with-temp-buffer
+;;                    (call-process "rga" nil t nil query ".")
+;;                    (buffer-string)))
+;;          (lines (--map (s-split ":" it) (s-split "\n" result)))
+;;          (files (-uniq (--map #'car lines)))
+;; 
+;; (raven (list (raven-file-contents-source "LICENSE")
+;;              (raven-file-contents-source "README.org")))
 
 (provide 'raven)
 ;;; raven.el ends here
