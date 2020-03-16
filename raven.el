@@ -37,6 +37,9 @@
 (defvar raven-minibuffer-lines 20
   "Number of lines to display in the minibuffer.")
 
+(defvar raven-exit-hook nil
+  "Hook run when exiting minibuffer selection.")
+
 (defvar raven--sources '())
 (defvar raven--last nil)
 (defvar raven--matching '())
@@ -47,8 +50,8 @@
 
 (defvar raven-minibuffer-map (make-sparse-keymap))
 (define-key raven-minibuffer-map (kbd "\\") (lambda () (interactive) nil))
-(define-key raven-minibuffer-map (kbd "C-g") 'keyboard-escape-quit)
-(define-key raven-minibuffer-map (kbd "C-c") 'keyboard-escape-quit)
+(define-key raven-minibuffer-map (kbd "C-g") 'raven-quit)
+(define-key raven-minibuffer-map (kbd "C-c") 'raven-quit)
 (define-key raven-minibuffer-map (kbd "<return>") 'raven-do)
 (define-key raven-minibuffer-map (kbd "<backtab>") 'raven-previous)
 (define-key raven-minibuffer-map (kbd "<tab>") 'raven-next)
@@ -304,6 +307,12 @@ ACTIONS is a list of actions, which can be:
       (setq raven--index 0
             raven--source (% (+ raven--source 1) (length raven--matching))))))
 
+(defun raven-quit ()
+  "Quit the selection interface without running an action."
+  (interactive)
+  (run-hooks 'raven-exit-hook)
+  (keyboard-escape-quit))
+
 (defun raven-do (&optional action-function)
   "Act upon selected candidate.
 If ACTION-FUNCTION is given use it, otherwise use the first action for the candidate."
@@ -327,6 +336,7 @@ If ACTION-FUNCTION is given use it, otherwise use the first action for the candi
                                          (raven-action-function (car actions))
                                        (lambda (x) x)))))
               raven--result (raven-candidate-value candidate)))))
+  (run-hooks 'raven-exit-hook)
   (exit-minibuffer))
 
 ;;;###autoload
@@ -573,17 +583,6 @@ meaning as in `read-file-name'."
     (s-split "\n" (f-read-text file)))
    :actions
    (raven-file-contents-actions file)))
-
-;; (defun tonic/raven-grep (query)
-;;   "Sources for lines found via grep (or a clone)."
-;;   (let* ((result (with-temp-buffer
-;;                    (call-process "rga" nil t nil query ".")
-;;                    (buffer-string)))
-;;          (lines (--map (s-split ":" it) (s-split "\n" result)))
-;;          (files (-uniq (--map #'car lines)))
-;; 
-;; (raven (list (raven-file-contents-source "LICENSE")
-;;              (raven-file-contents-source "README.org")))
 
 (provide 'raven)
 ;;; raven.el ends here
