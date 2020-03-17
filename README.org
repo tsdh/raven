@@ -2,4 +2,4 @@
 Raven is a flexible tool for selecting candidates from the Emacs minibuffer.
 It supports multiple candidate sources and multiple actions, and is well-integrated with Evil mode.
 It also supports dummy candidates, which are similar to Helm's dummy sources (except that they are candidates, not sources, and therefore one might include multiple dummy candidates within a single selection).
-It is also reasonably quick (works fairly well with 100,000 candidates when testing).
+It is reasonably quick (works fairly well with 100,000 candidates when testing).
