@@ -92,8 +92,9 @@
    (line-end-position)))
 
 (cl-defstruct (raven-candidate (:constructor raven-candidate--create)
-                               (:copier nil))
-  type display face value action)
+                               (:copier nil)
+                               (:conc-name raven-candidate--))
+  type (display nil :type string) face value action)
 
 (cl-defun raven-candidate-create
     (display &key
@@ -108,11 +109,30 @@
    :value (if value value display)
    :action action))
 
+(defun raven-candidate-display (candidate)
+  (cond ((raven-candidate-p candidate) (raven-candidate--display candidate))
+        (t candidate)))
+
+(defun raven-candidate-value (candidate)
+  (cond ((raven-candidate-p candidate) (raven-candidate--value candidate))
+        (t candidate)))
+
+(defun raven-candidate-type (candidate)
+  (cond ((raven-candidate-p candidate) (raven-candidate--type candidate))
+        (t 'normal)))
+
+(defun raven-candidate-face (candidate)
+  (cond ((raven-candidate-p candidate) (raven-candidate--face candidate))
+        (t 'default)))
+
+(defun raven-candidate-action (candidate)
+  (cond ((raven-candidate-p candidate) (raven-candidate--action candidate))
+        (t '())))
+
 (defun raven-candidate-display-string (candidate)
   "Return the display of CANDIDATE as a string."
   (let ((display (raven-candidate-display candidate)))
     (cond ((stringp display) display)
-          ((or (symbolp display) (keywordp display)) (symbol-name display))
           (t (error "Invalid candidate display %s for candidate %s (of type %s)"
                     display candidate (type-of display))))))
 
@@ -157,27 +177,32 @@
 (cl-defun raven-source-create (name &key candidates (actions '()))
   "Create a new source named NAME with the given CANDIDATES and ACTIONS.
 
-CANDIDATES is a list of candidates (either `raven-candidate's or display values).
+CANDIDATES is either:
+- A list of candidates
+- A function returning a list of candidates given a regex
 ACTIONS is a list of actions, which can be:
 - functions taking candidate values as arguments
 - pairs of key strings and such functions"
   (raven-source--create
    :name name
-   :candidates (--map (if (raven-candidate-p it) it (raven-candidate-create it))
-                      candidates)
+   :candidates
+   (if (functionp candidates) candidates
+     (--map (if (raven-candidate-p it) it (raven-candidate-create it))
+            candidates))
    :actions actions
    :keymap (raven-actions-keymap actions)))
 
-(defun raven-matching-candidates (candidates regex)
-  "Return the candidates in CANDIDATES matching REGEX."
-  (cond ((functionp candidates) (funcall candidates regex))
-        (t (--filter (raven-match it regex) candidates))))
+(defun raven-matching-candidates (candidates pattern)
+  "Return the candidates in CANDIDATES matching PATTERN."
+  (cond ((functionp candidates) (funcall candidates pattern))
+        (t (let ((regex (raven-pattern-regex pattern)))
+             (--filter (raven-match it regex) candidates)))))
 
-(defun raven-filter-source (source regex)
-  "Return a copy of SOURCE including only the candidates matching REGEX."
+(defun raven-filter-source (source pattern)
+  "Return a copy of SOURCE including only the candidates matching PATTERN."
   (raven-source--create
    :name (raven-source-name source)
-   :candidates (raven-matching-candidates (raven-source-candidates source) regex)
+   :candidates (raven-matching-candidates (raven-source-candidates source) pattern)
    :actions (raven-source-actions source)
    :keymap (raven-source-keymap source)))
 
@@ -187,9 +212,9 @@ ACTIONS is a list of actions, which can be:
          (--map (concat "\\(" it "\\)") (split-string pattern))
          '(".*")))
 
-(defun raven-matching-sources (sources regex)
-  "Return the sources in SOURCES matching REGEX."
-  (let* ((matches (--map (raven-filter-source it regex) sources)))
+(defun raven-matching-sources (sources pattern)
+  "Return the sources in SOURCES matching PATTERN."
+  (let* ((matches (--map (raven-filter-source it pattern) sources)))
     (-filter #'raven-source-candidates matches)))
 
 (defun raven-display-source (source)
@@ -253,7 +278,7 @@ ACTIONS is a list of actions, which can be:
               raven--source 0
               raven--matching (raven-matching-sources
                                raven--sources
-                               (raven-pattern-regex pattern)))))
+                               pattern))))
     (-map #'raven-display-source (raven-nearby raven--matching))
     (goto-char (minibuffer-prompt-end))
     (put-text-property (line-end-position) (point-max) 'readonly t))
@@ -392,9 +417,9 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
 
 (defvar raven-extended-command-actions
   (list (lambda (c)
-          (add-to-list 'extended-command-history (symbol-name c))
-          (command-execute c))
-        (cons (kbd "C-h") 'describe-function)))
+          (add-to-list 'extended-command-history c)
+          (command-execute (intern-soft c)))
+        (cons (kbd "C-h") (lambda (c) (describe-function (intern-soft c))))))
 
 ;;;###autoload
 (defun raven-extended-commands-source ()
@@ -402,9 +427,9 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Commands"
    :candidates
-   (--map
-    (raven-candidate-create (symbol-name it) :value it)
-    (apropos-internal "" 'commandp))
+   (-map
+    #'raven-candidate-create
+    (all-completions "" obarray #'commandp))
    :actions
    raven-extended-command-actions))
 
@@ -414,8 +439,8 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Command History"
    :candidates
-   (--map
-    (raven-candidate-create it :value (intern-soft it))
+   (-map
+    #'raven-candidate-create
     extended-command-history)
    :actions
    raven-extended-command-actions))
@@ -426,9 +451,9 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Commands"
    :candidates
-   (-map #'raven-candidate-create (apropos-internal "" #'commandp))
+   (lambda (r) (all-completions r obarray #'commandp))
    :actions
-   '(describe-function)))
+   (list (lambda (c) (describe-function (intern-soft c))))))
 
 ;;;###autoload
 (defun raven-apropos-function-source ()
@@ -436,9 +461,9 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Functions"
    :candidates
-   (-map #'raven-candidate-create (apropos-internal "" #'fboundp))
+   (lambda (r) (all-completions r obarray #'fboundp))
    :actions
-   '(describe-function)))
+   (list (lambda (c) (describe-function (intern-soft c))))))
 
 ;;;###autoload
 (defun raven-apropos-variable-source ()
@@ -446,9 +471,13 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Variables"
    :candidates
-   (-map #'raven-candidate-create (apropos-internal "" (lambda (x) (and (boundp x) (not (keywordp x))))))
+   (lambda (r) (-map #'raven-candidate-create
+                     (all-completions
+                      r obarray
+                      (lambda (x) (let ((sym (intern-soft x)))
+                                    (and (boundp sym) (not (keywordp sym))))))))
    :actions
-   '(describe-variable)))
+   (list (lambda (c) (describe-variable (intern-soft c))))))
 
 (defvar raven-buffer-actions
   (list 'switch-to-buffer
@@ -527,7 +556,7 @@ INITIAL is the initial text to match."
   (raven (list (raven-apropos-command-source)
                (raven-apropos-function-source)
                (raven-apropos-variable-source))
-         :initial (concat "^" (if initial initial (thing-at-point 'symbol t)))))
+         :initial (if initial initial (thing-at-point 'symbol t))))
 
 ;;;###autoload
 (defun raven-for-buffers ()
