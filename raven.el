@@ -24,9 +24,8 @@
   :group 'faces)
 
 (defface raven-source-name
-  '((t :underline t
-       :foreground "white"
-       :weight bold))
+  '((default :underline t :inherit bold)
+    (((class color) (background dark)) :foreground "white"))
   "Face used to highlight source names.")
 
 (defface raven-highlight
