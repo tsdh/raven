@@ -8,9 +8,7 @@
 
 ;;; Code:
 (require 'dash)
-(require 's)
 (require 'f)
-(require 'ht)
 (require 'subr-x)
 (require 'recentf)
 (when (featurep 'evil)
@@ -634,7 +632,7 @@ meaning as in `read-file-name'."
    (-map-indexed
     (lambda (index l)
       (raven-candidate-create l :value index))
-    (s-split "\n" (f-read-text file)))
+    (split-string (f-read-text file) "\n"))
    :actions
    (raven-file-contents-actions file)))
 
