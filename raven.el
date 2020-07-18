@@ -362,7 +362,6 @@ ACTIONS is a list of actions, which can be:
   "Act upon selected candidate.
 If ACTION-FUNCTION is given use it, otherwise use the first action for the candidate."
   (interactive)
-  (message "start")
   (if (null raven--matching)
       (progn
         (setq raven--action (lambda (x) x)
@@ -370,7 +369,6 @@ If ACTION-FUNCTION is given use it, otherwise use the first action for the candi
     (progn
       (let* ((source (car (nthcdr raven--source raven--matching)))
              (candidate (car (nthcdr raven--index (raven-source-candidates source)))))
-        (message "here")
         (setq raven--action (cond (action-function
                                    action-function)
                                   ((raven-candidate-action candidate)
@@ -481,7 +479,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Commands"
    :candidates
-   (lambda (r) (all-completions r obarray #'commandp))
+   (lambda (r) (-map #'raven-candidate-create (all-completions r obarray #'commandp)))
    :actions
    (list (lambda (c) (describe-function (intern-soft c))))))
 
@@ -491,7 +489,7 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
   (raven-source-create
    "Functions"
    :candidates
-   (lambda (r) (all-completions r obarray #'fboundp))
+   (lambda (r) (-map #'raven-candidate-create (all-completions r obarray #'fboundp)))
    :actions
    (list (lambda (c) (describe-function (intern-soft c))))))
 
