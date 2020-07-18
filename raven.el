@@ -408,7 +408,7 @@ Use INITIAL as the initial input."
   "Replacement for `completing-read'.
 PROMPT, COLLECTION, PREDICATE, REQUIRE-MATCH, INITIAL-INPUT, HIST, DEF, and
 INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
-  (ignore predicate require-match)
+  (ignore predicate)
   (or
    (cond ((functionp collection)
           (read-string prompt initial-input hist def inherit-input-method))
@@ -422,13 +422,23 @@ INHERIT-INPUT-METHOD have the same meaning as in `completing-read'."
             (raven (list (raven-source-create "Completions" :candidates candidates))
                    :prompt prompt
                    :initial initial-input)))
-         (t (raven (list (raven-source-create
+         (t (raven (cons (raven-source-create
                           "Completions"
                           :candidates
                           (--map (if (consp it)
                                      (raven-candidate-create (car it))
                                    it)
-                                 collection)))
+                                 collection))
+                         (if require-match
+                             '()
+                           (list
+                            (raven-source-create
+                             "Other"
+                             :candidates
+                             (list (raven-candidate-create
+                                    "Specify"
+                                    :type 'dummy
+                                    :action (lambda (_) (raven-input))))))))
                    :prompt prompt
                    :initial initial-input)))
    (raven-input)))
